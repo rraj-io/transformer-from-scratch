@@ -19,6 +19,76 @@ from pathlib import Path
 from tqdm import tqdm
 import warnings
 
+def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
+    sos_idx = tokenizer_tgt.token_to_id('[SOS]')
+    eos_idx = tokenizer_tgt.token_to_id('[EOS]')
+
+    # Precompute the encoder output adn reuse it for every tokken we get from the decoder_input
+    encoder_output = model.encode(source, source_mask)
+    # Initialise the decoder input withthe sos token 
+    decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(source).to(device)
+    while True:
+        if decoder.size(1) == max_len:
+            source_mask
+
+            # build a mask for the target (decoder_input)
+            decoder_mask = casual_mask(decoder_input.size(1)).type_as(source_mask).to(device)
+
+            # calcualte the output of the deccoder 
+            out = model.decode(encoder_output, source_mask, decoder_input, decoder_mask)
+
+            # get the next token 
+            prob = model.project(out[:,-1])
+            # select the token with the max probability bercause it is the greedy source 
+            _, next_word = torch.max(prob, dim=1)
+            decoder_input = torch.cat([decoder_input, torch.empty(1, 1).type_as(source).fill_(next_word.item()).to(device)], dim=1)
+
+            if next_word == eos_idx:
+                break
+
+        return decoder_input.squeeze()
+
+def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step, writer, num_examples=2):
+    model.eval()
+    count = 0
+
+    #source_texts = []
+    #expected = []
+    #predicted = []
+
+    # size of the control windoiw (just use a default value)
+    console_width = 80
+
+    with torch.no_grad():
+        for batch in validation_ds:
+            count += 1
+            encoder_input = batch['encoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+
+            assert encoder_input.size(0) == 1, "batch size must be 1 for validation"
+
+            model_out = greedy_decode(model, encoder_input, encoder_mask, tokenizer_src, tokenizer_tgt, max_len, device)
+
+            source_text = batch['src_text'][0]
+            target_text = batch['tgt_text'][0]
+            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
+
+            #source_texts.append(source_text)
+            #expected.append(target_text)
+            #predicted.append(model_out_text)
+
+            # print to the console 
+            print_msg('-'*console_width)
+            print_msg(f'SOURCE: {source_text}')
+            print_msg(f'TARGET: {target_text}')
+            print_msg(f'PREDICTED: {model_out_text}')
+
+            if count == num_examples:
+                break
+
+
+        
+
 def get_all_sentences(ds, lang):
     for item in ds:
         yield item['translation'][lang]
@@ -50,13 +120,13 @@ def get_ds(config):
     train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
 
     train_ds = BilingualDataset(train_ds_raw, 
-                                tokenizer_src,,
+                                tokenizer_src,
                                 tokenizer_tgt,
                                 config['lang_src'],
                                 config['lang_tgt'],
                                 config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, 
-                                tokenizer_src,,
+                                tokenizer_src,
                                 tokenizer_tgt,
                                 config['lang_src'],
                                 config['lang_tgt'],
@@ -71,8 +141,8 @@ def get_ds(config):
         max_len_src = max(max_len_src, len(src_ids))
         max_len_tgt = max(max_len_tgt, len(tgt_ids))
 
-    print(f'Max length of the source sentence: {max_len_src})
-    print(f'Max length of the target sentence: {max_len_tgt})
+    print(f'Max length of the source sentence: {max_len_src}')
+    print(f'Max length of the target sentence: {max_len_tgt}')
 
     train_dataloader = DataLoader(train_ds, 
                                   batch_size=config['batch_size'], 
@@ -93,8 +163,8 @@ def get_model(config, vocab_src_len, vocab_tgt_len):
 
 def train_model(config):
     # define the device 
-    device = torch.device('cuda' if torch.cuda.is_available())
-    print(f'Using device {device})
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'Using device {device}')
     
     Path(config['model_folder']).mkdir(parents=True, exist_ok=True)
 
@@ -118,9 +188,9 @@ def train_model(config):
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
     for epoch in range(initial_epoch, config['num_epochs']):
-        model.train()
         batch_iterator = tqdm(train_dataloader, desc=f'Processing epoch {epoch:02d}')
         for batch in batch_iterator:
+            model.train()
 
             encoder_input = batch['encoder_input'].to(device) # (batch, seq_len)
             decoder_input = batch['decoder_input'].to(device) # (batch, seq_len)
@@ -147,8 +217,12 @@ def train_model(config):
             #update the weights 
             optimizer.step()
             optimizer.zero_grad()
-
+            
+            
             global_step += 1
+        
+        run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
+
 
         # save the model at hte end of every epoch 
         model_filename = get_weights_file_path(config, f'{epoch:02d}')
