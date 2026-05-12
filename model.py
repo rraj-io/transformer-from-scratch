@@ -1,5 +1,5 @@
 import torch
-import torch.nn
+import torch.nn as nn
 import math
 
 class InputEmbeddings(nn.Module):
@@ -12,7 +12,7 @@ class InputEmbeddings(nn.Module):
         self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size, d_model)
 
-    ddef forward(self, x):
+    def forward(self, x):
         return self.embedding(x) * math.sqrt(self.d_model)
 
 class PositionalEncoding(nn.Module):
@@ -30,7 +30,7 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(seq_len, d_model)
         # Create a vector of shape (seq_len)
         position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1)
-        div_term = troch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         # Apply the sin to even position
         pe[:,0::2] = torch.sin(position * div_term)
         # Apply the cos to odd position
@@ -49,7 +49,7 @@ class LayerNormalization(nn.Module):
     def __init__(self,
                  eps: float = 10e**-6) -> None:
         super().__init__()
-        self.aps = eps
+        self.eps = eps
         self.alpha = nn.Parameter(torch.ones(1)) # Multiplied
         self.bias = nn.Parameter(torch.zeros(1))    # Added
 
@@ -64,7 +64,7 @@ class FeedForwardBlock(nn.Module):
     def __init__(self,
                  d_model: int,
                  d_ff: int,
-                 dropput: float) -> None:
+                 dropout: float) -> None:
         super().__init__()
         self.linear_1 = nn.Linear(d_model, d_ff) # W1 and B1
         self.dropout = dropout
@@ -102,7 +102,7 @@ class MultiHeadAttentionBlock(nn.Module):
         if mask is not None:
             attention_scores.masked_fill_(mask==0, -1e9)
         attention_scores = attention_scores.softmax(dim = -1) # (batch, h, seq_len, seq_len)
-        if drop is not None:
+        if dropout is not None:
             attention_scores = dropout(attention_scores)
 
         return (attention_scores @ value), attention_scores
@@ -197,7 +197,7 @@ class Decoder(nn.Module):
         for layer in self.layers:
             x = layer(x, encoder_output, src_mask, tgt_mask)
 
-        retrun self.norm(x)
+        return self.norm(x)
 
 class Projectionlayer(nn.Module):
     
@@ -225,7 +225,7 @@ class Transformer(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.src_embed = src_embed
-        self.tft_embed = tft_embed
+        self.tgt_embed = tgt_embed
         self.src_pos = src_pos
         self.projection_layer = projection_layer
 
